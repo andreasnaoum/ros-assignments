@@ -78,21 +78,21 @@ def transform_setpoints(robot_frame_id, setpoint):
     # except(tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
     #     rate.sleep()
     #     continue
-    transform = tf_buffer.lookup_transform(robot_frame_id, "map", rospy.Time()) 
+    rospy.loginfo("Transforming...")
+    transform = tf_buffer.lookup_transform(robot_frame_id, setpoint.header.frame_id, rospy.Time(0)) 
     transformed_setpoint = tf2_geometry_msgs.do_transform_point(setpoint, transform)
+    rospy.loginfo("Transforming Done")
     return transformed_setpoint
 
 def create_twist(transformed_setpoint):
+    # msg.angular.z = math.atan2(transformed_setpoint.point.y, transformed_setpoint.point.x)
     msg = Twist()
-    msg.angular.z = math.atan2(transformed_setpoint.point.y, transformed_setpoint.point.x)
-    if msg.angular.z > max_angular_velocity:
-        msg.angular.z = max_angular_velocity
-    if msg.linear.x > max_linear_velocity:
-        msg.linear.x = max_linear_velocity
-    # msg.linear.x = 0.5 * math.sqrt(transformed_setpoint.point.x ** 2 + transformed_setpoint.point.y ** 2)
     # msg.angular.z = 4 * math.atan2(transformed_setpoint.point.y, transformed_setpoint.point.x)
-    # msg.linear.x = 0.5 * math.sqrt(transformed_setpoint.point.x ** 2 + transformed_setpoint.point.y ** 2)
-    # limit_velocities(msg)
+    # msg.linear.x = 0.5 * math.sqrt(transformed_setpoint.point.y ** 2 + transformed_setpoint.point.x ** 2)
+    msg.angular.z = math.atan2(transformed_setpoint.point.y, transformed_setpoint.point.x)
+    msg.linear.x = transformed_setpoint.point.x
+    limit_velocities(msg)
+    print("Message is " + str(msg))
     return msg
 
 def limit_velocities(msg):
@@ -104,80 +104,36 @@ def limit_velocities(msg):
 
 def move(path):
     global control_client, robot_frame_id, pub
-
+    rate = rospy.Rate(10)
     while path.poses:
-        # # Call service client with path
+        rospy.loginfo("Controller Move in While")
+        # Call service client with path
         res = control_client(path)
         setpoint = res.setpoint
         new_path = res.new_path
         # rospy.loginfo("The frame is: %s", res.setpoint.header.frame_id)
-
+        
         # Transform Setpoint from service client
-        try:
-            transform = tf_buffer.lookup_transform(robot_frame_id,setpoint.header.frame_id,rospy.Time())
-            transformed_setpoint = tf2_geometry_msgs.do_transform_point(setpoint, transform)
-        except(tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
-            rate.sleep()
-            continue
-        # transformed_setpoint = transform_setpoints(robot_frame_id, res.setpoint)
+        transformed_setpoint = transform_setpoints(robot_frame_id, setpoint)
         
         # Create Twist message from the transformed Setpoint
         msg = create_twist(transformed_setpoint)
 
         # Publish Twist
-        # rospy.loginfo("Publishing Twist" + str(msg))
+        rospy.loginfo("Publishing Twist")
         pub.publish(msg)
         rate.sleep()
+
         # Call service client again if the returned path is not empty and do stuff again
         path = new_path
-
-    # while new_path.poses:
-    #     # rospy.loginfo("new_path.poses = " + str(new_path.poses))
-    #     # Call service client with path
-    #     res = control_client(new_path)
-    #     rospy.loginfo("The frame is: %s", res.setpoint.header.frame_id)
-    #     # Transform Setpoint from service client
-    #     transformed_setpoint = transform_setpoints(robot_frame_id, res.setpoint)
-    #     # Create Twist message from the transformed Setpoint
-    #     msg = create_twist(transformed_setpoint)
-    #     # Publish Twist
-    #     rospy.loginfo("Publishing Twist")
-    #     pub.publish(msg)
-    #     # Call service client again if the returned path is not empty and do stuff again
-    #     new_path = res.new_path
-    #     rate.sleep()
-    #     # Get new path from action server
-    #     path = res.new_path
-
 
     # Send 0 control Twist to stop robot
     msg = Twist() 
     msg.angular.z = 0
     msg.linear.x = 0
+    rospy.loginfo("Publishing Twist 0")
     pub.publish(msg)
 
-'''
-Example:
-
-from move_base.msg import *
-rospy.init_node('foo')
-
-
-from move_base.msg import *
-from geometry_msgs.msg import *
-g1 = MoveBaseGoal(PoseStamped(Header(frame_id = 'base_link'),
-                              Pose(Point(2, 0, 0),
-                                   Quaternion(0, 0, 0, 1))))
-g2 = MoveBaseGoal(PoseStamped(Header(frame_id = 'base_link'),
-                              Pose(Point(5, 0, 0),
-                                   Quaternion(0, 0, 0, 1))))
-
-client = ActionClient('move_base', MoveBaseAction)
-
-h1 = client.send_goal(g1)
-h2 = client.send_goal(g2)
-client.cancel_all_goals()
-'''
 
 def get_path():
     global goal_client
@@ -185,38 +141,26 @@ def get_path():
     while True:
         rospy.loginfo("Controller: Get Path is called")
         # Get path from action server
-        
         goal_client.wait_for_server()
-        # while ready == False:
-        #     ready = goal_client.wait_for_server()
 
         rospy.loginfo("Controller: Wait for server ends")
-
-        # goal_client.send_goal_and_wait(0)
-
-        # goal_client.send_goal(0)
 
         goal = irob_assignment_1.msg.GetNextGoalAction()
 
         goal_client.send_goal(goal)
 
-        rospy.loginfo("Controller: Sending the goal "+str(goal))
+        rospy.loginfo("Controller: Sending the goal")
 
         goal_client.wait_for_result()
-        # while ready1 == False:
-        #     ready1 = goal_client.wait_for_result()
+
         rospy.loginfo("Controller: Wait for result ends")
 
         result = goal_client.get_result()
 
-        print("Controller: Goal is " + str(result))
+        print("Controller: Get Goal")
 
-        
-
-        # goal_client.wait_for_result()
-
-        # if result.gain == 0:
-        #     break
+        if result.gain == 0:
+            break
 
         # Call move with path from action server
         move(result.path)
@@ -236,7 +180,7 @@ if __name__ == "__main__":
     # Topic /cmd_vel with subscriber /gazebo
     pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
     # Limit the frequency of publishing to /cmd_vel between 10-20 Hz
-    rate = rospy.Rate(10)
+    # rate = rospy.Rate(10)
 
     # Init simple action client
     # Provided by the explore node
