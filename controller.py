@@ -16,6 +16,60 @@ while True:
       setpoint_transformed = transform_setpoint_to_robot_frame(setpoint)
       publish(setpoint_transformed)
       sleep()
+
+irob_assignment_1/GetNextGoalAction --- action server get_next_goal
+      
+Definitions:
+
+# Goal definition
+---
+# Result definition
+float64 gain
+nav_msgs/Path path
+---
+# Feedback definition
+float64 gain
+nav_msgs/Path path
+
+
+irob_assignment_1/GetSetpoint
+
+# Define the request
+nav_msgs/Path path
+---
+# Define the response
+geometry_msgs/PointStamped setpoint
+nav_msgs/Path new_path
+
+You get a new path since the collision avoidance node is removing points along the path which is thinks you have already moved passed. 
+The setpoint is where you should move the robot next to follow the path in a safe and efficient way.
+
+geometry_msgs/PointStamped
+
+std_msgs/Header header
+  uint32 seq
+  time stamp
+  string frame_id
+geometry_msgs/Point point
+  float64 x
+  float64 y
+  float64 z
+
+
+Topics:
+
+Type: geometry_msgs/Twist
+
+Publishers: None
+
+Subscribers: 
+ * /gazebo (http://X:YYYYY/)
+
+ 
+Transform:
+transform = tf_buffer.lookup_transform(...)
+transformed_setpoint = tf2_geometry_msgs.do_transform_point(setpoint, transform)
+
 """
 
 import rospy
@@ -37,9 +91,9 @@ listener = None
 goal_client = None
 # The collision avoidance service client
 control_client = None
+
 # The velocity command publisher
 pub = None
-
 # The robots frame
 robot_frame_id = "base_link"
 
@@ -48,51 +102,23 @@ max_linear_velocity = 0.5
 # Max angular velocity (rad/s)
 max_angular_velocity = 1.0
 
-"""
-def move(path):
-    global control_client, robot_frame_id, pub
 
-    # Call service client with path
-    res = control_client(path)
-
-    # Transform Setpoint from service client
-    transform = tf_buffer.lookup_transform(robot_frame_id, "map", rospy.Time())
-
-    # Create Twist message from the transformed Setpoint
-
-    # Publish Twist
-
-    # Call service client again if the returned path is not empty and do stuff again
-
-    # Send 0 control Twist to stop robot
-
-    # Get new path from action server
-"""
 
 # ---------------- Supportive Functions ----------------
 
 def transform_setpoints(robot_frame_id, setpoint):
-    # try:
-    #     transform = tf_buffer.lookup_transform(robot_frame_id,setpoint.header.frame_id,rospy.Time())
-    #     transformed_setpoint = tf2_geometry_msgs.do_transform_point(setpoint, transform)
-    # except(tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
-    #     rate.sleep()
-    #     continue
-    rospy.loginfo("Transforming...")
+    rospy.loginfo("Controller: Transforming...")
     transform = tf_buffer.lookup_transform(robot_frame_id, setpoint.header.frame_id, rospy.Time(0)) 
     transformed_setpoint = tf2_geometry_msgs.do_transform_point(setpoint, transform)
-    rospy.loginfo("Transforming Done")
+    rospy.loginfo("Controller: Transforming Done")
     return transformed_setpoint
 
 def create_twist(transformed_setpoint):
-    # msg.angular.z = math.atan2(transformed_setpoint.point.y, transformed_setpoint.point.x)
     msg = Twist()
-    # msg.angular.z = 4 * math.atan2(transformed_setpoint.point.y, transformed_setpoint.point.x)
-    # msg.linear.x = 0.5 * math.sqrt(transformed_setpoint.point.y ** 2 + transformed_setpoint.point.x ** 2)
     msg.angular.z = math.atan2(transformed_setpoint.point.y, transformed_setpoint.point.x)
-    msg.linear.x = transformed_setpoint.point.x
+    # msg.linear.x = transformed_setpoint.point.x
+    msg.linear.x = math.hypot(transformed_setpoint.point.x, transformed_setpoint.point.y)
     limit_velocities(msg)
-    print("Message is " + str(msg))
     return msg
 
 def limit_velocities(msg):
@@ -101,17 +127,20 @@ def limit_velocities(msg):
     if msg.linear.x > max_linear_velocity:
         msg.linear.x = max_linear_velocity
 
+# ---------------- Main Functions ----------------
 
 def move(path):
     global control_client, robot_frame_id, pub
+    # Limit the frequency of publishing to /cmd_vel between 10-20 Hz
     rate = rospy.Rate(10)
+    # Call service client with path
+    # Call service client again if the returned path is not empty and do stuff again
     while path.poses:
         rospy.loginfo("Controller Move in While")
-        # Call service client with path
+        # control_client.wait_for_service()
         res = control_client(path)
         setpoint = res.setpoint
-        new_path = res.new_path
-        # rospy.loginfo("The frame is: %s", res.setpoint.header.frame_id)
+        path = res.new_path
         
         # Transform Setpoint from service client
         transformed_setpoint = transform_setpoints(robot_frame_id, setpoint)
@@ -120,18 +149,15 @@ def move(path):
         msg = create_twist(transformed_setpoint)
 
         # Publish Twist
-        rospy.loginfo("Publishing Twist")
+        rospy.loginfo("Controller: Publishing Twist")
         pub.publish(msg)
         rate.sleep()
-
-        # Call service client again if the returned path is not empty and do stuff again
-        path = new_path
 
     # Send 0 control Twist to stop robot
     msg = Twist() 
     msg.angular.z = 0
     msg.linear.x = 0
-    rospy.loginfo("Publishing Twist 0")
+    rospy.loginfo("Controller: Publishing Twist z=0, x=0")
     pub.publish(msg)
 
 
@@ -143,7 +169,7 @@ def get_path():
         # Get path from action server
         goal_client.wait_for_server()
 
-        rospy.loginfo("Controller: Wait for server ends")
+        rospy.loginfo("Controller: Wait for goal_client ends")
 
         goal = irob_assignment_1.msg.GetNextGoalAction()
 
@@ -153,18 +179,20 @@ def get_path():
 
         goal_client.wait_for_result()
 
-        rospy.loginfo("Controller: Wait for result ends")
+        rospy.loginfo("Controller: Wait for goal_client result ends")
 
         result = goal_client.get_result()
 
         print("Controller: Get Goal")
 
-        if result.gain == 0:
+        if result.gain == 0: # not result.path
+            rospy.loginfo("Controller: Path is empty")
             break
 
         # Call move with path from action server
         move(result.path)
 
+# ------------------- Main -------------------
 
 if __name__ == "__main__":
     # Init node
@@ -175,23 +203,26 @@ if __name__ == "__main__":
     # Time to buffer the transforms
     tf_buffer = tf2_ros.Buffer()    
     listener = tf2_ros.TransformListener(tf_buffer) 
+    rospy.loginfo("Controller: TF2 Buffer initialized!")
 
     # Init publisher
     # Topic /cmd_vel with subscriber /gazebo
     pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
-    # Limit the frequency of publishing to /cmd_vel between 10-20 Hz
-    # rate = rospy.Rate(10)
+    rospy.loginfo("Controller: Set as Publisher to topic /cmd_vel")
 
     # Init simple action client
     # Provided by the explore node
     goal_client = actionlib.SimpleActionClient('get_next_goal', irob_assignment_1.msg.GetNextGoalAction)
+    rospy.loginfo("Controller: Set as Service Client for get_next_goal of Explore Node")
 
     # Init service client
     # Proviced by the collision_avoidance node
     control_client = rospy.ServiceProxy('get_setpoint', GetSetpoint)
+    rospy.loginfo("Controller: Set as Service Client for get_setpoint of Collision Avoidance Node")
 
     # Call get path
     get_path()
 
     # Spin
     rospy.spin()
+
