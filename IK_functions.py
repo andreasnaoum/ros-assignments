@@ -3,40 +3,33 @@ import math
 import numpy as np
 
 """
-    # {Timotheos Souroulla}
-    # {timsou@kth.se}
+    # Andreas Naoum
+    # anaoum@kth.se
 """
+
+
+# Defined Values for Scara Robot
+l = [0.07, 0.30, 0.35]
 
 def scara_IK(point):
     x = point[0]
     y = point[1]
     z = point[2]
     q = [0.0, 0.0, 0.0]
-
-    l0 = 0.07
-    l1 = 0.30
-    l2 = 0.35
     
-    #Fill in your IK solution here and return the three joint values in q
-
-    x = x - l0
-    enu = x ** 2 + y ** 2 - l1 ** 2 - l2 ** 2
-    den = 2 * l1 * l2
-    q[1] = math.acos(enu / den)
-
-    enu = (l1 + l2 * math.cos(q[1])) * y - l2 * math.sin(q[1]) * x
-    den = x ** 2 + y ** 2
-    s1 = enu / den
-
-    enu = (l1 + l2 * math.cos(q[1])) * x + l2 * math.sin(q[1]) * y
-    c1 = enu / den
-
-    q[0] = math.atan2(s1,c1)
     
+    x = x - l[0]
+
+    c2 = (pow(x,2) + pow(y,2) - pow(l[1],2) - pow(l[2],2)) / (2*l[1]*l[2])
+    s2 = sqrt(1-pow(c2,2))
+
+    k1 = l[1] + l[2]*c2
+    k2 = l[2]*s2
+
+    q[0] = atan2(y,x) - atan2(k2,k1)
+    q[1] = atan2(s2, c2)
     q[2] = z
-
-    ##################
-
+    
     return q
 
 def kuka_IK(point, R, joint_positions):
