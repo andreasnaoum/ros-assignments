@@ -32,121 +32,139 @@ def scara_IK(point):
     
     return q
 
+# Defined Values for Scara Robot
+l0 = 0.311
+L = 0.4
+M = 0.39
+l7 = 0.078
+
+tolerance = 0.5
+
+
+# ------------------- Supportive Functions -------------------
+
+def DH_transformation(alpha, a, d, q):
+        return np.array(
+                [
+                    [cos(q), -sin(q) * cos(alpha),  sin(q) * sin(alpha), d * cos(q)],
+                    [sin(q),    cos(q)*cos(alpha), -cos(q) * sin(alpha), d * sin(q)],
+                    [     0,           sin(alpha),           cos(alpha),          a],
+                    [     0,                    0,                    0,          1]
+                ]
+        )
+
+
+def matrix_multiply1(matrix):
+        return np.dot(
+          matrix,
+          ([0],[0],[1])
+        )
+
+
+def matrix_multiply2(matrix):
+        return np.dot(
+          matrix,
+          ([0],[0],[0],[1])
+        )
+
+
+def calculate_error(T0_7, R, point):
+    error_angle = 0.5*( np.cross(T0_7[[0,1,2],0], np.array([R[0][0], R[1][0], R[2][0]])) + np.cross(T0_7[[0,1,2],1], np.array([R[0][1], R[1][1], R[2][1]])) + np.cross(T0_7[[0,1,2],2], np.array([R[0][2], R[1][2], R[2][2]])) )
+    error_position = T0_7[[0,1,2],3] - point
+    error = np.array([error_position[0], error_position[1], error_position[2], error_angle[0], error_angle[1], error_angle[2]])
+    return error
+
+
+# ------------------- KUKA Robot Function -------------------
+
+
 def kuka_IK(point, R, joint_positions):
     x = point[0]
     y = point[1]
     z = point[2]
     q = joint_positions #it must contain 7 elements
 
-    L = 0.4
-    M = 0.39
-    a = math.pi / 2
+    error = 1
+    while error > 0.0001:
 
-    dbs = 0.311
-    dwf = 0.078
-    error = [1,1,1,1,1,1]
+        DH =(
+			[  (pi/2), l0, 0, q[0]],
+            [ -(pi/2),     0, 0, q[1]],
+            [ -(pi/2),     L, 0, q[2]],
+            [  (pi/2),     0, 0, q[3]],
+            [  (pi/2),     M, 0, q[4]],
+            [ -(pi/2),     0, 0, q[5]],
+            [       0, l7, 0, q[6]]
+		)
 
-    z = np.array(([0],[0],[1]))
-    z_trans = np.array(([0],[0],[0],[1]))
+        T0_1 = DH_transformation(DH[0][0],DH[0][1],DH[0][2],DH[0][3])
+        T1_2 = DH_transformation(DH[1][0],DH[1][1],DH[1][2],DH[1][3])
+        T2_3 = DH_transformation(DH[2][0],DH[2][1],DH[2][2],DH[2][3])
+        T3_4 = DH_transformation(DH[3][0],DH[3][1],DH[3][2],DH[3][3])
+        T4_5 = DH_transformation(DH[4][0],DH[4][1],DH[4][2],DH[4][3])
+        T5_6 = DH_transformation(DH[5][0],DH[5][1],DH[5][2],DH[5][3])
+        T6_7 = DH_transformation(DH[6][0],DH[6][1],DH[6][2],DH[6][3])
 
-    """
-    Fill in your IK solution here and return the seven joint values in q
-    """
+        T0_2 = np.dot(T0_1, T1_2)
+        T0_3 = np.dot(T0_2, T2_3) 
+        T0_4 = np.dot(T0_3, T3_4)
+        T0_5 = np.dot(T0_4, T4_5)
+        T0_6 = np.dot(T0_5, T5_6)
+        T0_7 = np.dot(T0_6, T6_7)
 
-    while np.linalg.norm(error) > 0.0001:
+        R1 = T0_1[0:3, 0:3]
+        R2 = T0_2[0:3, 0:3]
+        R3 = T0_3[0:3, 0:3]
+        R4 = T0_4[0:3, 0:3]
+        R5 = T0_5[0:3, 0:3]
+        R6 = T0_6[0:3, 0:3]
+        # R7 = T0_7[0:3, 0:3]
 
-        # Create Modified DH parameters
-        DH =([ a, dbs, 0, q[0]],
-            [ -a, 0  , 0, q[1]],
-            [ -a, L  , 0, q[2]],
-            [  a, 0  , 0, q[3]],
-            [  a, M  , 0, q[4]],
-            [ -a, 0  , 0, q[5]],
-            [  0, dwf, 0, q[6]])
+        z1 = ([0],[0],[1])
+        z2 = matrix_multiply1(R1)
+        z3 = matrix_multiply1(R2)
+        z4 = matrix_multiply1(R3)
+        z5 = matrix_multiply1(R4)
+        z6 = matrix_multiply1(R5)
+        z7 = matrix_multiply1(R6)
 
-        q_new = q
-	
-        T0_1 = np.array(TF_Mat(DH[0][0],DH[0][1],DH[0][2],DH[0][3]))
-		R1 = np.array(T0_1[0:3,0:3])
-		z1 = z
-        Pi1 = np.dot(T0_1, z_trans)
+        Pi1 = matrix_multiply2(T0_1)
+        Pi2 = matrix_multiply2(T0_2)
+        Pi3 = matrix_multiply2(T0_3)
+        Pi4 = matrix_multiply2(T0_4)
+        Pi5 = matrix_multiply2(T0_5)
+        Pi6 = matrix_multiply2(T0_6)
+        Pi7 = matrix_multiply2(T0_7)
 
-        T1_2 = TF_Mat(DH[1][0],DH[1][1],DH[1][2],DH[1][3])
-		T0_2 = np.dot(np.array(T0_1),np.array(T1_2))
-		R2 = np.array(T0_2[0:3,0:3])
-        z2 = np.dot(R1, z)
-        Pi2 = np.dot(T0_2, z_trans)
-
-        T2_3 = TF_Mat(DH[2][0],DH[2][1],DH[2][2],DH[2][3])
-		T0_3 = np.dot(T0_2,np.array(T2_3)) 
-		R3 = np.array(T0_3[0:3,0:3])
-        z3 = np.dot(R2, z)
-        Pi3 = np.dot(T0_3, z_trans)
-
-        T3_4 = TF_Mat(DH[3][0],DH[3][1],DH[3][2],DH[3][3])
-		T0_4 = np.dot(T0_3,np.array(T3_4))
-		R4 = np.array(T0_4[0:3,0:3])
-        z4 = np.dot(R3, z)
-        Pi4 = np.dot(T0_4, z_trans)
-
-        T4_5 = TF_Mat(DH[4][0],DH[4][1],DH[4][2],DH[4][3])
-		T0_5 = np.dot(T0_4,np.array(T4_5))
-		R5 = np.array(T0_5[0:3,0:3])
-        z5 = np.dot(R4, z)
-        Pi5 = np.dot(T0_5, z_trans)
-
-        T5_6 = TF_Mat(DH[5][0],DH[5][1],DH[5][2],DH[5][3])
-		T0_6 = np.dot(T0_5,np.array(T5_6))
-		R6 = np.array(T0_6[0:3,0:3])
-        z6 = np.dot(R5, z)
-        Pi6 = np.dot(T0_6, z_trans)
-
-        T6_7 = TF_Mat(DH[6][0],DH[6][1],DH[6][2],DH[6][3])
-		T0_7 = np.dot(T0_6,np.array(T6_7))
-		R7 = np.array(T0_7[0:3,0:3])
-        z7 = np.dot(R6, z)
-        Pi7 = np.dot(T0_7, z_trans)
-
-        P01 = np.transpose(np.array(np.cross(np.transpose(z1),np.transpose(Pi7[0:3] - Pi1[0:3]))))
+        P01 = np.transpose(np.cross(np.transpose(z1), np.transpose(Pi7[0:3] - Pi1[0:3])))
         Pcol1 = np.concatenate((P01,z1), axis = 0)
 
-        P02 = np.transpose(np.array(np.cross(np.transpose(z2),np.transpose(Pi7[0:3] - Pi2[0:3]))))
+        P02 = np.transpose(np.cross(np.transpose(z2), np.transpose(Pi7[0:3] - Pi2[0:3])))
         Pcol2 = np.concatenate((P02,z2), axis = 0)
 
-        P03 = np.transpose(np.array(np.cross(np.transpose(z3),np.transpose(Pi7[0:3] - Pi3[0:3]))))
+        P03 = np.transpose(np.cross(np.transpose(z3), np.transpose(Pi7[0:3] - Pi3[0:3])))
         Pcol3 = np.concatenate((P03,z3), axis = 0)
 
-        P04 = np.transpose(np.array(np.cross(np.transpose(z4),np.transpose(Pi7[0:3] - Pi4[0:3]))))
+        P04 = np.transpose(np.cross(np.transpose(z4), np.transpose(Pi7[0:3] - Pi4[0:3])))
         Pcol4 = np.concatenate((P04,z4), axis = 0)
 
-        P05 = np.transpose(np.array(np.cross(np.transpose(z5),np.transpose(Pi7[0:3] - Pi5[0:3]))))
+        P05 = np.transpose(np.cross(np.transpose(z5), np.transpose(Pi7[0:3] - Pi5[0:3])))
         Pcol5 = np.concatenate((P05,z5), axis = 0)
 
-        P06 = np.transpose(np.array(np.cross(np.transpose(z6),np.transpose(Pi7[0:3] - Pi6[0:3]))))
+        P06 = np.transpose(np.cross(np.transpose(z6), np.transpose(Pi7[0:3] - Pi6[0:3])))
         Pcol6 = np.concatenate((P06,z6), axis = 0)
 
-        P07 = np.transpose(np.array(np.cross(np.transpose(z7),np.transpose(Pi7[0:3] - Pi7[0:3]))))
+        P07 = np.transpose(np.cross(np.transpose(z7), np.transpose(Pi7[0:3] - Pi7[0:3])))
         Pcol7 = np.concatenate((P07,z7), axis = 0)
 
         Jacob = np.concatenate((Pcol1,Pcol2,Pcol3,Pcol4,Pcol5,Pcol6,Pcol7), axis = 1)
         Jac_new =  np.linalg.pinv(Jacob)
 
-        error_angle = 0.5*( np.cross(T0_7[[0,1,2],0], np.array([R[0][0], R[1][0], R[2][0]])) + np.cross(T0_7[[0,1,2],1], np.array([R[0][1], R[1][1], R[2][1]])) + np.cross(T0_7[[0,1,2],2], np.array([R[0][2], R[1][2], R[2][2]])) )
-        error_position = T0_7[[0,1,2],3] - point
-        error = np.array([error_position[0], error_position[1], error_position[2], error_angle[0], error_angle[1], error_angle[2]])
+        error_matrix = calculate_error(T0_7, R, point)
+        
+        error = np.linalg.norm(error_matrix)
 
-        q_new = q_new - np.dot(Jac_new, error)
-	
-		q = q_new
-	# End of While Loop
+        q = q - np.dot(Jac_new, error_matrix )
 
-    q = q_new
     return q
-    
 
-def TF_Mat(alpha, a, d, q):
-        Trans = ([[            math.cos(q), -math.sin(q) * math.cos(alpha),  math.sin(q) * math.sin(alpha), d * math.cos(q)],
-                  [            math.sin(q), math.cos(q)*math.cos(alpha)   , -math.cos(q) * math.sin(alpha), d * math.sin(q)],
-                  [                 0     , math.sin(alpha)               ,  math.cos(alpha)              , a],
-                  [                 0     , 0                             ,           0                   , 1]])
-        return Trans
