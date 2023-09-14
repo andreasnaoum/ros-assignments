@@ -38,8 +38,6 @@ L = 0.4
 M = 0.39
 l7 = 0.078
 
-tolerance = 0.5
-
 
 # ------------------- Supportive Functions -------------------
 
@@ -68,11 +66,10 @@ def matrix_multiply2(matrix):
         )
 
 
-def calculate_error(T0_7, R, point):
-    error_angle = 0.5*( np.cross(T0_7[[0,1,2],0], np.array([R[0][0], R[1][0], R[2][0]])) + np.cross(T0_7[[0,1,2],1], np.array([R[0][1], R[1][1], R[2][1]])) + np.cross(T0_7[[0,1,2],2], np.array([R[0][2], R[1][2], R[2][2]])) )
-    error_position = T0_7[[0,1,2],3] - point
-    error = np.array([error_position[0], error_position[1], error_position[2], error_angle[0], error_angle[1], error_angle[2]])
-    return error
+def calculate_error(end_effector_transform, R, point):
+    position_error = end_effector_transform[:3,3] - point
+    orientation_error = (0.5 * np.cross(end_effector_transform[:3,0], R[:, 0]) +  0.5 * np.cross(end_effector_transform[:3,1], R[:, 1]) +  0.5 * np.cross(end_effector_transform[:3,2], R[:, 2]))
+    return np.concatenate((position_error, orientation_error))
 
 
 # ------------------- KUKA Robot Function -------------------
@@ -88,83 +85,45 @@ def kuka_IK(point, R, joint_positions):
     while error > 0.0001:
 
         DH =(
-			[  (pi/2), l0, 0, q[0]],
+			[  (pi/2),    l0, 0, q[0]],
             [ -(pi/2),     0, 0, q[1]],
             [ -(pi/2),     L, 0, q[2]],
             [  (pi/2),     0, 0, q[3]],
             [  (pi/2),     M, 0, q[4]],
             [ -(pi/2),     0, 0, q[5]],
-            [       0, l7, 0, q[6]]
+            [       0,    l7, 0, q[6]]
 		)
 
-        T0_1 = DH_transformation(DH[0][0],DH[0][1],DH[0][2],DH[0][3])
-        T1_2 = DH_transformation(DH[1][0],DH[1][1],DH[1][2],DH[1][3])
-        T2_3 = DH_transformation(DH[2][0],DH[2][1],DH[2][2],DH[2][3])
-        T3_4 = DH_transformation(DH[3][0],DH[3][1],DH[3][2],DH[3][3])
-        T4_5 = DH_transformation(DH[4][0],DH[4][1],DH[4][2],DH[4][3])
-        T5_6 = DH_transformation(DH[5][0],DH[5][1],DH[5][2],DH[5][3])
-        T6_7 = DH_transformation(DH[6][0],DH[6][1],DH[6][2],DH[6][3])
+        T_list = []
+        rotation_list = []
+        vector_list = []
+        pi_list = []
+        col_list = []
 
-        T0_2 = np.dot(T0_1, T1_2)
-        T0_3 = np.dot(T0_2, T2_3) 
-        T0_4 = np.dot(T0_3, T3_4)
-        T0_5 = np.dot(T0_4, T4_5)
-        T0_6 = np.dot(T0_5, T5_6)
-        T0_7 = np.dot(T0_6, T6_7)
+        # Find out T0_1, T1_2, .., T6_7
+        for row in DH:
+              T = DH_transformation(row[0], row[1], row[2], row[3])
+              T_list.append(T)
+              rotation = T[0:3, 0:3]
+              rotation_list.append(rotation)
+              vector = matrix_multiply1(rotation)
+              vector_list.append(vector)
+              pi_vector = matrix_multiply2(T)
+              pi_list.append(pi_vector)
 
-        R1 = T0_1[0:3, 0:3]
-        R2 = T0_2[0:3, 0:3]
-        R3 = T0_3[0:3, 0:3]
-        R4 = T0_4[0:3, 0:3]
-        R5 = T0_5[0:3, 0:3]
-        R6 = T0_6[0:3, 0:3]
-        # R7 = T0_7[0:3, 0:3]
 
-        z1 = ([0],[0],[1])
-        z2 = matrix_multiply1(R1)
-        z3 = matrix_multiply1(R2)
-        z4 = matrix_multiply1(R3)
-        z5 = matrix_multiply1(R4)
-        z6 = matrix_multiply1(R5)
-        z7 = matrix_multiply1(R6)
+        end_effector_transform = pi_list[-1]
+        for i in range(len(vector_list)):
+              pi_i = pi_list[i]
+              p_i = np.transpose(np.cross(np.transpose(vector_list[i]), np.transpose(end_effector_transform[0:3] - pi_i[0:3])))
+              col = np.concatenate((p_i, vector_list[i]), axis = 0)
+              col_list.append(col)
 
-        Pi1 = matrix_multiply2(T0_1)
-        Pi2 = matrix_multiply2(T0_2)
-        Pi3 = matrix_multiply2(T0_3)
-        Pi4 = matrix_multiply2(T0_4)
-        Pi5 = matrix_multiply2(T0_5)
-        Pi6 = matrix_multiply2(T0_6)
-        Pi7 = matrix_multiply2(T0_7)
+        Jacobian = np.concatenate(col_list, axis = 1)
+        Jacobian_inverse =  np.linalg.pinv(Jacobian)
 
-        P01 = np.transpose(np.cross(np.transpose(z1), np.transpose(Pi7[0:3] - Pi1[0:3])))
-        Pcol1 = np.concatenate((P01,z1), axis = 0)
-
-        P02 = np.transpose(np.cross(np.transpose(z2), np.transpose(Pi7[0:3] - Pi2[0:3])))
-        Pcol2 = np.concatenate((P02,z2), axis = 0)
-
-        P03 = np.transpose(np.cross(np.transpose(z3), np.transpose(Pi7[0:3] - Pi3[0:3])))
-        Pcol3 = np.concatenate((P03,z3), axis = 0)
-
-        P04 = np.transpose(np.cross(np.transpose(z4), np.transpose(Pi7[0:3] - Pi4[0:3])))
-        Pcol4 = np.concatenate((P04,z4), axis = 0)
-
-        P05 = np.transpose(np.cross(np.transpose(z5), np.transpose(Pi7[0:3] - Pi5[0:3])))
-        Pcol5 = np.concatenate((P05,z5), axis = 0)
-
-        P06 = np.transpose(np.cross(np.transpose(z6), np.transpose(Pi7[0:3] - Pi6[0:3])))
-        Pcol6 = np.concatenate((P06,z6), axis = 0)
-
-        P07 = np.transpose(np.cross(np.transpose(z7), np.transpose(Pi7[0:3] - Pi7[0:3])))
-        Pcol7 = np.concatenate((P07,z7), axis = 0)
-
-        Jacob = np.concatenate((Pcol1,Pcol2,Pcol3,Pcol4,Pcol5,Pcol6,Pcol7), axis = 1)
-        Jac_new =  np.linalg.pinv(Jacob)
-
-        error_matrix = calculate_error(T0_7, R, point)
-        
+        error_matrix = calculate_error(end_effector_transform, np.array(R), point)
         error = np.linalg.norm(error_matrix)
-
-        q = q - np.dot(Jac_new, error_matrix )
+        q = q - np.dot(Jacobian_inverse, error_matrix)
 
     return q
-
