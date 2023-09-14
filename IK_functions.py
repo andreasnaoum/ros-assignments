@@ -39,15 +39,27 @@ M = 0.39
 l7 = 0.078
 
 
+# --------------- Defined Values for Scara Robot ----------------
+l0 = 0.311
+L = 0.4
+M = 0.39
+l7 = 0.078
+
+tolerance = 0.0005
+
+DEBUG = False
+TEST = False
+
+
 # ------------------- Supportive Functions -------------------
 
-def DH_transformation(alpha, a, d, q):
+def DH_transformation(alpha, a, d, theta):
         return np.array(
                 [
-                    [cos(q), -sin(q) * cos(alpha),  sin(q) * sin(alpha), d * cos(q)],
-                    [sin(q),    cos(q)*cos(alpha), -cos(q) * sin(alpha), d * sin(q)],
-                    [     0,           sin(alpha),           cos(alpha),          a],
-                    [     0,                    0,                    0,          1]
+                    [cos(theta), -sin(theta) * cos(alpha),  sin(theta) * sin(alpha), d * cos(theta)],
+                    [sin(theta),    cos(theta)*cos(alpha), -cos(theta) * sin(alpha), d * sin(theta)],
+                    [         0,               sin(alpha),               cos(alpha),              a],
+                    [         0,                        0,                        0,              1]
                 ]
         )
 
@@ -67,22 +79,37 @@ def matrix_multiply2(matrix):
 
 
 def calculate_error(end_effector_transform, R, point):
-    position_error = end_effector_transform[:3,3] - point
+    position_error = end_effector_transform[0:3,3] - point
     orientation_error = (0.5 * np.cross(end_effector_transform[:3,0], R[:, 0]) +  0.5 * np.cross(end_effector_transform[:3,1], R[:, 1]) +  0.5 * np.cross(end_effector_transform[:3,2], R[:, 2]))
     return np.concatenate((position_error, orientation_error))
 
 
 # ------------------- KUKA Robot Function -------------------
 
+"""
+The inputs to this function are: 
 
+    point = (x, y, z), the desired position of the end-effector.
+    R = 3x3 rotation matrix, the desired orientation of the end-effector.
+    joint_positions = (q1, q2, q3, q4, q5, q5, q7) the current joint positions.
+
+The output of this function is a vector q containing the 7 joint values that give the desired pose of the end-effector. 
+
+"""
 def kuka_IK(point, R, joint_positions):
-    x = point[0]
-    y = point[1]
-    z = point[2]
+    # x = point[0]
+    # y = point[1]
+    # z = point[2]
     q = joint_positions #it must contain 7 elements
 
-    error = 1
-    while error > 0.0001:
+    while True:
+
+        T_list = []
+        T0_X_list = []
+        rotation_list = []
+        vector_list = []
+        pi_list = []
+        col_list = []
 
         DH =(
 			[  (pi/2),    l0, 0, q[0]],
@@ -94,36 +121,51 @@ def kuka_IK(point, R, joint_positions):
             [       0,    l7, 0, q[6]]
 		)
 
-        T_list = []
-        rotation_list = []
-        vector_list = []
-        pi_list = []
-        col_list = []
-
+        k = 0
         # Find out T0_1, T1_2, .., T6_7
         for row in DH:
               T = DH_transformation(row[0], row[1], row[2], row[3])
               T_list.append(T)
-              rotation = T[0:3, 0:3]
-              rotation_list.append(rotation)
-              vector = matrix_multiply1(rotation)
-              vector_list.append(vector)
-              pi_vector = matrix_multiply2(T)
-              pi_list.append(pi_vector)
+              if DEBUG:
+                print("T ", k, "-", k+1, " is ", T)
 
+        for i in range(len(T_list)):
+            if i==0:
+                T0_X = T_list[i]
+                vec = ([0],[0],[1])
+            else: 
+                T0_X = np.dot(T0_X_list[i-1], T_list[i])
+                vec = matrix_multiply1(rotation_list[i-1])
+            rot = T0_X[0:3, 0:3]
+            rotation_list.append(rot)
+            pi_i = matrix_multiply2(T0_X)
+            if DEBUG: 
+                print("T0_", i, " = \n", T0_X)
+                print("R ", i, "is ", rot)
+                print("vector ", i, "is ", vec)
+            T0_X_list.append(T0_X)
+            vector_list.append(vec)
+            pi_list.append(pi_i)
 
         end_effector_transform = pi_list[-1]
+        
         for i in range(len(vector_list)):
               pi_i = pi_list[i]
-              p_i = np.transpose(np.cross(np.transpose(vector_list[i]), np.transpose(end_effector_transform[0:3] - pi_i[0:3])))
+              p_i = np.transpose(
+                        np.cross(np.transpose(vector_list[i]), 
+                        np.transpose(end_effector_transform[0:3] - pi_i[0:3]))
+                    )
               col = np.concatenate((p_i, vector_list[i]), axis = 0)
               col_list.append(col)
 
         Jacobian = np.concatenate(col_list, axis = 1)
         Jacobian_inverse =  np.linalg.pinv(Jacobian)
+        error_matrix = calculate_error(T0_X_list[-1], np.array(R), point)
 
-        error_matrix = calculate_error(end_effector_transform, np.array(R), point)
-        error = np.linalg.norm(error_matrix)
-        q = q - np.dot(Jacobian_inverse, error_matrix)
+        if TEST==True or np.linalg.norm(error_matrix) < tolerance:
+             print("Out of the loop!")
+             break
+        else:
+             q = q - np.dot(Jacobian_inverse, error_matrix)
 
     return q
