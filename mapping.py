@@ -7,7 +7,7 @@
 """
 
 # Python standard library
-from math import cos, sin, atan2, fabs
+from math import cos, sin, atan2, fabs, ceil, floor
 
 # Numpy
 import numpy as np
@@ -19,7 +19,7 @@ from local.map_msgs import OccupancyGridUpdate
 
 from grid_map import GridMap
 
-DEBUG = True # Set true for debug/info messages
+DEBUG = False # Set true for debug/info messages
 
 
 class Mapping:
@@ -164,9 +164,15 @@ class Mapping:
         Fill in your solution here
         """
 
+        if DEBUG:
+            print("--------- Update Map Start ---------")
+
         # Position offset between the robot's position and the origin of the map
         offset_x = pose.pose.position.x - origin.position.x 
         offset_y = pose.pose.position.y - origin.position.y
+
+        min_map_x, min_map_y = grid_map.get_width() + 1, grid_map.get_height() + 1
+        max_map_x, max_map_y = -1, -1
 
         obstacles = []
 
@@ -183,15 +189,11 @@ class Mapping:
                 # This way you can get both the bearing and the range.
                 bearing = scan.angle_min + scan.angle_increment * i  
 
-                offset_x = pose.pose.position.x - origin.position.x 
-                offset_y = pose.pose.position.y - origin.position.y
-
                 # transform to map frame 
                 x, y = range_cur * cos(bearing + robot_yaw), range_cur * sin(bearing + robot_yaw) 
                 map_x, map_y = int((x + offset_x)/resolution), int((y + offset_y)/resolution)
 
                 # Supportive messages
-             
                 if DEBUG:
                     print("----------------------")
                     print("Laser angle: ", bearing)
@@ -199,21 +201,23 @@ class Mapping:
                     print("map x = ", map_x, ", map y = ", map_y)
 
                 # Obstacles
-                if self.is_in_bounds(grid_map, map_x, map_y):
-                    if DEBUG:
-                        print("Add Obstacle: ", (map_x, map_y))
+                if DEBUG:
+                    print("Add Obstacle: ", (map_x, map_y))
+                
+                if self.add_to_map(grid_map, map_x, map_y, self.occupied_space):
                     obstacles.append((map_x, map_y))
-                    free_cells = self.raytrace((offset_x/resolution, offset_y/resolution), (map_x, map_y))
-                    for cell in free_cells:
-                        cell_x, cell_y = cell
-                        if self.is_in_bounds(grid_map, cell_x, cell_y): #  and not( (cell_x, cell_y) in obstacles)
-                            self.add_to_map(grid_map, cell_x, cell_y, self.free_space)
-                        if DEBUG:
-                            print("Add Free: ", (cell[0], cell[1]))
-                    
+                    min_map_x, min_map_y = min(min_map_x, map_x), min(min_map_y, map_y)   
+                    max_map_x, max_map_y = max(max_map_x, map_x), max(max_map_y, map_y)
+                    free_area = self.raytrace((offset_x/resolution, offset_y/resolution), (map_x, map_y))
+                    for point in free_area:
+                        point_x, point_y = point
+                        if self.add_to_map(grid_map, point_x, point_y, self.free_space):
+                            if DEBUG:
+                                print("Add Free: ", (point_x, point_y))
+                        
 
+        # Set occupied space again, not to be overwritten
         list(map(lambda obstacle: self.add_to_map(grid_map, obstacle[0], obstacle[1], self.occupied_space), obstacles))
-        # list(map(lambda empty: self.add_to_map(grid_map, empty[0], empty[1], self.free_space), free_area))
 
         """
         For C only!
@@ -223,31 +227,53 @@ class Mapping:
         # Only get the part that has been updated
         update = OccupancyGridUpdate()
         # The minimum x index in 'grid_map' that has been updated
-        update.x = min(value[0] for value in obstacles)
+        # update.x = min(value[0] for value in obstacles)
         # The minimum y index in 'grid_map' that has been updated
-        update.y = min(value[1] for value in obstacles)
+        # update.y = min(value[1] for value in obstacles)
         # Maximum x index - minimum x index + 1
-        update.width = max(value[0] for value in obstacles) - update.x + 1
+        # update.width = max(value[0] for value in obstacles) - update.x + 1
         # Maximum y index - minimum y index + 1
-        update.height = max(value[1] for value in obstacles) - update.y + 1
+        # update.height = max(value[1] for value in obstacles) - update.y + 1
+
+        # The minimum x index in 'grid_map' that has been updated
+        update.x = min_map_x
+        # The minimum y index in 'grid_map' that has been updated
+        update.y = min_map_y
+        # Maximum x index - minimum x index + 1
+        update.width = max_map_x - update.x + 1
+        # Maximum y index - minimum y index + 1
+        update.height = max_map_y - update.y + 1
         # The map data inside the rectangle, in row-major order.
         update.data = []
 
         if DEBUG:
             print("----------------------")
             print("update x = ", update.x, " update.y = ", update.y)
-            print("update width = ", update.width, " update height = ", update.height)
+            print("update width = ", update.width, " update height = ", update.height) 
 
-        for test_y in range(0, update.height):
-            for test_x in range(0, update.width):
-                update.data.append(grid_map[update.x + test_x, update.y + test_y])
+        for grid_y in range(0, update.height):
+            list(map(lambda grid_x: update.data.append(grid_map[update.x + grid_x, update.y + grid_y]), range(0, update.width)))
+
+        # list(map(lambda grid_x: update.data.append(grid_map[update.x + grid_x, update.y + grid_y]), range(0, update.width)))
+
+        if DEBUG:
+            print("--------- Update Map End ---------")
 
         # Return the updated map together with only the
         # part of the map that has been updated
         return grid_map, update
 
 
+    def is_occupied(self, grid_map, pos):
+        if self.is_in_bounds(grid_map, pos[0], pos[1]) and grid_map[pos[0], pos[1]] == self.occupied_space:
+            return True
+        return False
+    
 
+    def is_in_radius_coverage(self, pos):
+        if pos[0] ** 2 + pos[1] ** 2 <= self.radius ** 2:
+            return True
+        return False
         
 
     def inflate_map(self, grid_map):
@@ -281,17 +307,30 @@ class Mapping:
 
         """
 
-        x_max = grid_map.get_width()
-        y_max = grid_map.get_height()
+        if DEBUG:
+            print("--------- Inflate Map Start ---------")
+
+        # Check for every cell in the map if there is a occupied cell in the radius coverage
+        for test_y in range(grid_map.get_height()):
+            for test_x in range(grid_map.get_width()):
+                if not(self.is_occupied(grid_map, (test_x, test_y))): 
+                    # self.is_in_bounds(grid_map, test_x + add_x, test_y + add_y) and
+                    for add_y in range(-floor(self.radius), ceil(self.radius)):
+                        for add_x in range(-floor(self.radius), ceil(self.radius)):
+                            if self.is_occupied(grid_map, (test_x + add_x, test_y + add_y)) and self.is_in_radius_coverage((add_x, add_y)):
+                                self.add_to_map(grid_map, test_x, test_y, self.c_space)
+                                if DEBUG:
+                                    print("Occupied space expanded, x = ", test_x, ", y = ", test_y)
+                                break
+                                                                                                                                                                              
+                    # if any((self.is_occupied(grid_map, (test_x + add_x, test_y + add_y)) and self.is_in_radius_coverage((add_x, add_y))) for add_x in range(-floor(self.radius), ceil(self.radius)) for add_y in range(-floor(self.radius), ceil(self.radius))):
+                    #    self.add_to_map(grid_map, test_x, test_y, self.c_space)
+                    #    if DEBUG:
+                    #        print("Occupied space expanded, x = ", test_x, ", y = ", test_y)
 
 
-        for xx in range(x_max):
-            for yy in range(y_max):
-                if grid_map[xx,yy] != self.occupied_space: # grid_map[xx,yy] == self.free_space
-                    if any( (self.is_in_bounds(grid_map, xx + radius_x, yy + radius_y) and grid_map[xx + radius_x, yy + radius_y]== self.occupied_space and (radius_x ** 2 + radius_y ** 2 <= self.radius ** 2) ) for radius_x in range(-self.radius, self.radius + 1) for radius_y in range(-self.radius, self.radius + 1)):
-                        self.add_to_map(grid_map, xx, yy, self.c_space)
-
-        
+        if DEBUG:
+            print("--------- Inflate Map End ---------")
         
         # Return the inflated map
         return grid_map
